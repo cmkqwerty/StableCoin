@@ -54,7 +54,7 @@ contract StableCoin is ERC20 {
         return (feeRatePer * amount) / 100;
     }
 
-    function depositColleteralBuffer() external payable {
+    function depositCollateralBuffer() external payable {
         int256 deficitOrSurplusInUsd = _getDeficitOrSurplusInContractInUsd();
         if (deficitOrSurplusInUsd <= 0) {
             uint256 deficitInUsd = uint256(deficitOrSurplusInUsd * -1);
@@ -85,7 +85,7 @@ contract StableCoin is ERC20 {
         depositorCoin.mint(msg.sender, mintDepositorCoinAmount);
     }
 
-    function withdrawColleteralBuffer(uint256 amount) external {
+    function withdrawCollateralBuffer(uint256 amount) external {
         require(depositorCoin.balanceOf(msg.sender) >= amount, "STC: Insufficient DPC funds.");
 
         depositorCoin.burn(msg.sender, amount);

@@ -8,7 +8,9 @@ import { Oracle } from "./Oracle.sol";
 contract StableCoin is ERC20 {
     DepositorCoin public depositorCoin;
 
-    uint256 public feeRatePer; 
+    uint256 public feeRatePer;
+    uint256 public constant INITIAL_COLLATERAL_RATIO_PER = 10;
+
     Oracle public oracle;
 
     constructor(uint256 _feeRatePer, Oracle _oracle) ERC20("StableCoin", "STC") {
@@ -24,6 +26,9 @@ contract StableCoin is ERC20 {
     }
 
     function burn(uint256 amount) external {
+        int256 deficitOrSurplusInUsd = _getDeficitOrSurplusInContractInUsd();
+        require(deficitOrSurplusInUsd >= 0, "STC: Currently in deficit.");
+
         _burn(msg.sender, amount);
 
         uint256 ethBack = amount / oracle.getPrice();
@@ -42,5 +47,63 @@ contract StableCoin is ERC20 {
         }
         
         return (feeRatePer * amount) / 100;
+    }
+
+    function depositColleteralBuffer() external payable {
+        int256 deficitOrSurplusInUsd = _getDeficitOrSurplusInContractInUsd();
+        if (deficitOrSurplusInUsd <= 0) {
+            uint256 deficitInUsd = uint256(deficitOrSurplusInUsd * -1);
+            uint256 usdInEth = oracle.getPrice();
+            uint256 deficitInEth = deficitInUsd / usdInEth;
+
+            uint256 requiredInitialSurplusInUsd = (INITIAL_COLLATERAL_RATIO_PER * totalSupply) / 100;
+            uint256 requiredInitialSurplusInEth = requiredInitialSurplusInUsd / usdInEth;
+
+            require(msg.value >= deficitInEth + requiredInitialSurplusInEth, "STC: Initial collateral ratio not met.");
+
+            uint256 newInitialSurplusInEth = msg.value - deficitInEth;
+            uint256 newInitialSurplusInUsd = newInitialSurplusInEth * usdInEth;
+
+            depositorCoin = new DepositorCoin();
+            uint256 _mintDepositorCoinAmount = newInitialSurplusInUsd;
+            depositorCoin.mint(msg.sender, _mintDepositorCoinAmount);
+        }
+
+        uint256 surplusInUsd = uint256(deficitOrSurplusInUsd);
+        uint256 dtcInUsd = _getDtcInUsd(surplusInUsd);
+        uint256 mintDepositorCoinAmount = (msg.value * dtcInUsd) / (oracle.getPrice());
+
+        depositorCoin.mint(msg.sender, mintDepositorCoinAmount);
+    }
+
+    function withdrawColleteralBuffer(uint256 amount) external {
+        require(depositorCoin.balanceOf(msg.sender) >= amount, "STC: Insufficient DPC funds.");
+
+        depositorCoin.burn(msg.sender, amount);
+
+        int deficitOrSurplusInUsd = _getDeficitOrSurplusInContractInUsd();
+        require(deficitOrSurplusInUsd > 0, "STC: Can't withdraw.");
+
+        uint256 surplusInUsd = uint256(deficitOrSurplusInUsd);
+        uint256 dtcInUsd = _getDtcInUsd(surplusInUsd);
+        uint256 refundingUsd = amount / dtcInUsd;
+        uint256 refundingEth = refundingUsd / oracle.getPrice();
+
+        (bool success,) = payable(msg.sender).call{value: refundingEth}("");
+
+        require(success, "STC: Withdraw refund failed.");
+
+    }
+
+    function _getDeficitOrSurplusInContractInUsd() private view returns (int256) {
+        uint256 ethContractBalanceInUsd = (address(this).balance - msg.value) * oracle.getPrice();
+        uint256 totalStableCoinBalanceInUsd = totalSupply;
+        int256 deficitOrSurplus = int256(ethContractBalanceInUsd) - int256(totalStableCoinBalanceInUsd);
+
+        return deficitOrSurplus;
+    }
+
+    function _getDtcInUsd(uint256 surplusInUsd) private view returns (uint256) {
+        return depositorCoin.totalSupply() / surplusInUsd;
     }
 }

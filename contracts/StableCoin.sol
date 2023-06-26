@@ -10,7 +10,7 @@ contract StableCoin is ERC20 {
 
     uint256 public feeRatePer;
     uint256 public constant INITIAL_COLLATERAL_RATIO_PER = 10;
-    
+
     Oracle public oracle;
 
     constructor(uint256 _feeRatePer, Oracle _oracle) ERC20("StableCoin", "STC") {
@@ -26,6 +26,9 @@ contract StableCoin is ERC20 {
     }
 
     function burn(uint256 amount) external {
+        int256 deficitOrSurplusInUsd = _getDeficitOrSurplusInContractInUsd();
+        require(deficitOrSurplusInUsd >= 0, "STC: Currently in deficit.");
+
         _burn(msg.sender, amount);
 
         uint256 ethBack = amount / oracle.getPrice();
@@ -71,6 +74,25 @@ contract StableCoin is ERC20 {
         uint256 mintDepositorCoinAmount = (msg.value * dtcInUsd) / (oracle.getPrice());
 
         depositorCoin.mint(msg.sender, mintDepositorCoinAmount);
+    }
+
+    function withdrawColleteralBuffer(uint256 amount) external {
+        require(depositorCoin.balanceOf(msg.sender) >= amount, "STC: Insufficient DPC funds.");
+
+        depositorCoin.burn(msg.sender, amount);
+
+        int deficitOrSurplusInUsd = _getDeficitOrSurplusInContractInUsd();
+        require(deficitOrSurplusInUsd > 0, "STC: Can't withdraw.");
+
+        uint256 surplusInUsd = uint256(deficitOrSurplusInUsd);
+        uint256 dtcInUsd = _getDtcInUsd(surplusInUsd);
+        uint256 refundingUsd = amount / dtcInUsd;
+        uint256 refundingEth = refundingUsd / oracle.getPrice();
+
+        (bool success,) = payable(msg.sender).call{value: refundingEth}("");
+
+        require(success, "STC: Withdraw refund failed.");
+
     }
 
     function _getDeficitOrSurplusInContractInUsd() private view returns (int256) {
